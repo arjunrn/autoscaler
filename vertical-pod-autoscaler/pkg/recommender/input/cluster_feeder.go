@@ -47,7 +47,6 @@ import (
 
 // ClusterStateFeeder can update state of ClusterState object.
 type ClusterStateFeeder interface {
-
 	// InitFromHistoryProvider loads historical pod spec into clusterState.
 	InitFromHistoryProvider(historyProvider history.HistoryProvider)
 
@@ -76,6 +75,7 @@ type ClusterStateFeederFactory struct {
 	VpaLister           vpa_lister.VerticalPodAutoscalerLister
 	PodLister           v1lister.PodLister
 	OOMObserver         oom.Observer
+	MemorySaveMode      bool
 }
 
 // Make creates new ClusterStateFeeder with internal data providers, based on kube client.
@@ -88,12 +88,13 @@ func (m ClusterStateFeederFactory) Make() *clusterStateFeeder {
 		vpaLister:           m.VpaLister,
 		clusterState:        m.ClusterState,
 		specClient:          spec.NewSpecClient(m.PodLister),
+		memorySaveMode:      m.MemorySaveMode,
 	}
 }
 
 // NewClusterStateFeeder creates new ClusterStateFeeder with internal data providers, based on kube client config.
 // Deprecated; Use ClusterStateFeederFactory instead.
-func NewClusterStateFeeder(config *rest.Config, clusterState *model.ClusterState) ClusterStateFeeder {
+func NewClusterStateFeeder(config *rest.Config, clusterState *model.ClusterState, memorySave bool) ClusterStateFeeder {
 	kubeClient := kube_client.NewForConfigOrDie(config)
 	podLister, oomObserver := NewPodListerAndOOMObserver(kubeClient)
 	return ClusterStateFeederFactory{
@@ -104,6 +105,7 @@ func NewClusterStateFeeder(config *rest.Config, clusterState *model.ClusterState
 		VpaCheckpointClient: vpa_clientset.NewForConfigOrDie(config).AutoscalingV1beta1(),
 		VpaLister:           vpa_api_util.NewAllVpasLister(vpa_clientset.NewForConfigOrDie(config), make(chan struct{})),
 		ClusterState:        clusterState,
+		MemorySaveMode:      memorySave,
 	}.Make()
 }
 
@@ -180,6 +182,7 @@ type clusterStateFeeder struct {
 	vpaCheckpointClient vpa_api.VerticalPodAutoscalerCheckpointsGetter
 	vpaLister           vpa_lister.VerticalPodAutoscalerLister
 	clusterState        *model.ClusterState
+	memorySaveMode      bool
 }
 
 func (feeder *clusterStateFeeder) InitFromHistoryProvider(historyProvider history.HistoryProvider) {
@@ -328,6 +331,9 @@ func (feeder *clusterStateFeeder) LoadPods() {
 		}
 	}
 	for _, pod := range pods {
+		if feeder.memorySaveMode && !feeder.matchesVPALabel(pod.PodLabels) {
+			continue
+		}
 		feeder.clusterState.AddOrUpdatePod(pod.ID, pod.PodLabels, pod.Phase)
 		for _, container := range pod.Containers {
 			feeder.clusterState.AddOrUpdateContainer(container.ID, container.Request)
@@ -360,6 +366,15 @@ Loop:
 			break Loop
 		}
 	}
+}
+
+func (feeder *clusterStateFeeder) matchesVPALabel(labels labels.Set) bool {
+	for _, vpa := range feeder.clusterState.Vpas {
+		if vpa.PodSelector.Matches(labels) {
+			return true
+		}
+	}
+	return false
 }
 
 func newContainerUsageSamplesWithKey(metrics *metrics.ContainerMetricsSnapshot) []*model.ContainerUsageSampleWithKey {

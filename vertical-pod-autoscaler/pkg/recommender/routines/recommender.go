@@ -42,6 +42,7 @@ const (
 var (
 	checkpointsWriteTimeout = flag.Duration("checkpoints-timeout", time.Minute, `Timeout for writing checkpoints since the start of the recommender's main loop`)
 	minCheckpointsPerRun    = flag.Int("min-checkpoints", 10, "Minimum number of checkpoints to write per recommender's main loop")
+	memorySaver             = flag.Bool("memory-saver", false, `Only track pods which have an associated VPA`)
 )
 
 // Recommender recommend resources for certain containers, based on utilization periodically got from metrics api.
@@ -72,6 +73,7 @@ type recommender struct {
 	podResourceRecommender        logic.PodResourceRecommender
 	useCheckpoints                bool
 	lastAggregateContainerStateGC time.Time
+	memorySaver                   bool
 }
 
 func (r *recommender) GetClusterState() *model.ClusterState {
@@ -203,6 +205,7 @@ type RecommenderFactory struct {
 
 	CheckpointsGCInterval time.Duration
 	UseCheckpoints        bool
+	MemorySaver           bool
 }
 
 // Make creates a new recommender instance,
@@ -230,7 +233,7 @@ func NewRecommender(config *rest.Config, checkpointsGCInterval time.Duration, us
 	clusterState := model.NewClusterState()
 	return RecommenderFactory{
 		ClusterState:           clusterState,
-		ClusterStateFeeder:     input.NewClusterStateFeeder(config, clusterState),
+		ClusterStateFeeder:     input.NewClusterStateFeeder(config, clusterState, *memorySaver),
 		CheckpointWriter:       checkpoint.NewCheckpointWriter(clusterState, vpa_clientset.NewForConfigOrDie(config).AutoscalingV1beta1()),
 		VpaClient:              vpa_clientset.NewForConfigOrDie(config).AutoscalingV1beta1(),
 		PodResourceRecommender: logic.CreatePodResourceRecommender(),
