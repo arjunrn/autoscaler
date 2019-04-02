@@ -46,6 +46,10 @@ type ClusterState struct {
 	labelSetMap labelSetMap
 }
 
+func (cluster *ClusterState) StateMapSize() int {
+	return len(cluster.aggregateStateMap)
+}
+
 // AggregateStateKey determines the set of containers for which the usage samples
 // are kept aggregated in the model.
 type AggregateStateKey interface {

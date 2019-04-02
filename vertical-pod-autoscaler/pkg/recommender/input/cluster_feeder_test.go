@@ -26,6 +26,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	vpa_types "k8s.io/autoscaler/vertical-pod-autoscaler/pkg/apis/autoscaling.k8s.io/v1beta2"
+	"k8s.io/autoscaler/vertical-pod-autoscaler/pkg/recommender/input/spec"
 	"k8s.io/autoscaler/vertical-pod-autoscaler/pkg/recommender/model"
 	target_mock "k8s.io/autoscaler/vertical-pod-autoscaler/pkg/target/mock"
 	"k8s.io/autoscaler/vertical-pod-autoscaler/pkg/utils/test"
@@ -156,5 +157,38 @@ func TestLegacySelector(t *testing.T) {
 
 		})
 	}
+}
 
+type testSpecClient struct {
+	pods []*spec.BasicPodSpec
+}
+
+func (c *testSpecClient) GetPodSpecs() ([]*spec.BasicPodSpec, error) {
+	return c.pods, nil
+}
+
+func makeTestSpecClient(names ...string) spec.SpecClient {
+	pods := make([]*spec.BasicPodSpec, len(names))
+	for i, p := range names {
+		pods[i] = &spec.BasicPodSpec{
+			ID:        model.PodID{Namespace: "default", PodName: p},
+			PodLabels: map[string]string{"name": p},
+		}
+	}
+	return &testSpecClient{
+		pods: pods,
+	}
+}
+
+func TestClusterStateFeeder_LoadPods(t *testing.T) {
+	vpaLabel, _ := labels.Parse("name=first")
+
+	clusterState := model.NewClusterState()
+	clusterState.Vpas = map[model.VpaID]*model.Vpa{
+		{VpaName: "test-vpa", Namespace: "default"}: {PodSelector: vpaLabel},
+	}
+
+	feeder := clusterStateFeeder{specClient: makeTestSpecClient("first", "second"), memorySaveMode: true, clusterState: clusterState}
+	feeder.LoadPods()
+	assert.Len(t, feeder.clusterState.Pods, 1, "number of pods is not 1")
 }
