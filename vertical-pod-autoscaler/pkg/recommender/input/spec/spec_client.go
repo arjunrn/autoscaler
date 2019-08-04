@@ -18,7 +18,7 @@ package spec
 
 import (
 	"k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/autoscaler/vertical-pod-autoscaler/pkg/recommender/input/selector"
 	"k8s.io/autoscaler/vertical-pod-autoscaler/pkg/recommender/model"
 	v1lister "k8s.io/client-go/listers/core/v1"
 )
@@ -48,7 +48,7 @@ type BasicContainerSpec struct {
 //SpecClient provides information about pods and containers Specification
 type SpecClient interface {
 	// Returns BasicPodSpec for each pod in the cluster
-	GetPodSpecs() ([]*BasicPodSpec, error)
+	GetPodSpecs([]selector.NamespacedSelector) ([]*BasicPodSpec, error)
 }
 
 type specClient struct {
@@ -63,12 +63,15 @@ func NewSpecClient(podLister v1lister.PodLister) SpecClient {
 	}
 }
 
-func (client *specClient) GetPodSpecs() ([]*BasicPodSpec, error) {
+func (client *specClient) GetPodSpecs(namespacedSelectors []selector.NamespacedSelector) ([]*BasicPodSpec, error) {
 	var podSpecs []*BasicPodSpec
-
-	pods, err := client.podLister.List(labels.Everything())
-	if err != nil {
-		return nil, err
+	var pods []*v1.Pod
+	for _, s := range namespacedSelectors {
+		nsPods, err := client.podLister.Pods(s.Namespace()).List(s.Selector())
+		if err != nil {
+			return nil, err
+		}
+		pods = append(pods, nsPods...)
 	}
 	for _, pod := range pods {
 		basicPodSpec := newBasicPodSpec(pod)
@@ -76,6 +79,7 @@ func (client *specClient) GetPodSpecs() ([]*BasicPodSpec, error) {
 	}
 	return podSpecs, nil
 }
+
 func newBasicPodSpec(pod *v1.Pod) *BasicPodSpec {
 	podId := model.PodID{
 		PodName:   pod.Name,

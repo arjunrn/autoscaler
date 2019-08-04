@@ -18,6 +18,7 @@ package input
 
 import (
 	"fmt"
+	"k8s.io/autoscaler/vertical-pod-autoscaler/pkg/recommender/input/selector"
 	"time"
 
 	apiv1 "k8s.io/api/core/v1"
@@ -34,6 +35,7 @@ import (
 	"k8s.io/autoscaler/vertical-pod-autoscaler/pkg/recommender/input/metrics"
 	"k8s.io/autoscaler/vertical-pod-autoscaler/pkg/recommender/input/oom"
 	"k8s.io/autoscaler/vertical-pod-autoscaler/pkg/recommender/input/spec"
+	"k8s.io/autoscaler/vertical-pod-autoscaler/pkg/recommender/input/utils"
 	"k8s.io/autoscaler/vertical-pod-autoscaler/pkg/recommender/model"
 	"k8s.io/autoscaler/vertical-pod-autoscaler/pkg/target"
 	metrics_recommender "k8s.io/autoscaler/vertical-pod-autoscaler/pkg/utils/metrics/recommender"
@@ -347,7 +349,13 @@ func (feeder *clusterStateFeeder) LoadVPAs() {
 
 // Load pod into the cluster state.
 func (feeder *clusterStateFeeder) LoadPods() {
-	podSpecs, err := feeder.specClient.GetPodSpecs()
+	var input []selector.NamespacedSelector
+	if feeder.memorySaveMode {
+		input = feeder.getNamespacedSelectors()
+	} else {
+		input = feeder.getAllPodsSelector()
+	}
+	podSpecs, err := feeder.specClient.GetPodSpecs(input)
 	if err != nil {
 		klog.Errorf("Cannot get SimplePodSpecs. Reason: %+v", err)
 	}
@@ -361,10 +369,8 @@ func (feeder *clusterStateFeeder) LoadPods() {
 			feeder.clusterState.DeletePod(key)
 		}
 	}
+
 	for _, pod := range pods {
-		if feeder.memorySaveMode && !feeder.matchesVPA(pod) {
-			continue
-		}
 		feeder.clusterState.AddOrUpdatePod(pod.ID, pod.PodLabels, pod.Phase)
 		for _, container := range pod.Containers {
 			feeder.clusterState.AddOrUpdateContainer(container.ID, container.Request)
@@ -373,7 +379,13 @@ func (feeder *clusterStateFeeder) LoadPods() {
 }
 
 func (feeder *clusterStateFeeder) LoadRealTimeMetrics() {
-	containersMetrics, err := feeder.metricsClient.GetContainersMetrics()
+	var input []selector.NamespacedSelector
+	if feeder.memorySaveMode {
+		input = feeder.getNamespacedSelectors()
+	} else {
+		input = feeder.getAllPodsSelector()
+	}
+	containersMetrics, err := feeder.metricsClient.GetContainersMetrics(input)
 	if err != nil {
 		klog.Errorf("Cannot get ContainerMetricsSnapshot from MetricsClient. Reason: %+v", err)
 	}
@@ -404,14 +416,16 @@ Loop:
 	metrics_recommender.RecordAggregateContainerStatesCount(feeder.clusterState.StateMapSize())
 }
 
-func (feeder *clusterStateFeeder) matchesVPA(pod *spec.BasicPodSpec) bool {
-	for vpaKey, vpa := range feeder.clusterState.Vpas {
-		podLabels := labels.Set(pod.PodLabels)
-		if vpaKey.Namespace == pod.ID.Namespace && vpa.PodSelector.Matches(podLabels) {
-			return true
-		}
+func (feeder *clusterStateFeeder) getNamespacedSelectors() []selector.NamespacedSelector {
+	var nsSelectors []selector.NamespacedSelector
+	for vpaID, vpa := range feeder.clusterState.Vpas {
+		nsSelectors = append(nsSelectors, utils.NewNamespacedSelect(vpaID.Namespace, vpa.PodSelector))
 	}
-	return false
+	return nsSelectors
+}
+
+func (feeder *clusterStateFeeder) getAllPodsSelector() []selector.NamespacedSelector {
+	return []selector.NamespacedSelector{utils.NewAllPodsSelector()}
 }
 
 func newContainerUsageSamplesWithKey(metrics *metrics.ContainerMetricsSnapshot) []*model.ContainerUsageSampleWithKey {

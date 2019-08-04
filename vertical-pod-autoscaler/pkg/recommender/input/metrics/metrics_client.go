@@ -17,6 +17,7 @@ limitations under the License.
 package metrics
 
 import (
+	"k8s.io/autoscaler/vertical-pod-autoscaler/pkg/recommender/input/selector"
 	"time"
 
 	k8sapiv1 "k8s.io/api/core/v1"
@@ -43,7 +44,7 @@ type ContainerMetricsSnapshot struct {
 type MetricsClient interface {
 	// GetContainersMetrics returns an array of ContainerMetricsSnapshots,
 	// representing resource usage for every running container in the cluster
-	GetContainersMetrics() ([]*ContainerMetricsSnapshot, error)
+	GetContainersMetrics([]selector.NamespacedSelector) ([]*ContainerMetricsSnapshot, error)
 }
 
 type metricsClient struct {
@@ -58,16 +59,20 @@ func NewMetricsClient(metricsGetter resourceclient.PodMetricsesGetter) MetricsCl
 	}
 }
 
-func (c *metricsClient) GetContainersMetrics() ([]*ContainerMetricsSnapshot, error) {
+func (c *metricsClient) GetContainersMetrics(selectors []selector.NamespacedSelector) ([]*ContainerMetricsSnapshot, error) {
 	var metricsSnapshots []*ContainerMetricsSnapshot
-
-	podMetricsInterface := c.metricsGetter.PodMetricses(k8sapiv1.NamespaceAll)
-	podMetricsList, err := podMetricsInterface.List(metav1.ListOptions{})
-	if err != nil {
-		return nil, err
+	var podMetrics []v1beta1.PodMetrics
+	for _, s := range selectors {
+		podMetricsInterface := c.metricsGetter.PodMetricses(s.Namespace())
+		podMetricsList, err := podMetricsInterface.List(metav1.ListOptions{LabelSelector: s.LabelSelector()})
+		if err != nil {
+			return nil, err
+		}
+		podMetrics = append(podMetrics, podMetricsList.Items...)
 	}
-	klog.V(3).Infof("%v podMetrics retrieved for all namespaces", len(podMetricsList.Items))
-	for _, podMetrics := range podMetricsList.Items {
+
+	klog.V(3).Infof("%v podMetrics retrieved", len(podMetrics))
+	for _, podMetrics := range podMetrics {
 		metricsSnapshotsForPod := createContainerMetricsSnapshots(podMetrics)
 		metricsSnapshots = append(metricsSnapshots, metricsSnapshotsForPod...)
 	}
